@@ -6,7 +6,7 @@ This is a Snakemake implementation for genome-wide demographic inference and loc
 
 By modeling transitions between coalescent genealogies shaped by ancestral recombination, the pipeline estimates the distribution of pairwise coalescence times across phased haplotypes and computes local times to the most recent common ancestor (TMRCA).
 
-Details of the decoding can be found **[MSMC2 tutorial]** (https://github.com/stschiff/msmc-tools/blob/master/msmc-tutorial/guide.md) 
+Details of the decoding can be found **[MSMC2 tutorial] (https://github.com/stschiff/msmc-tools/blob/master/msmc-tutorial/guide.md)**
 
 ### Key Features
 
