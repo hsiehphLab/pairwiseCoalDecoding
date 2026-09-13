@@ -1,0 +1,160 @@
+import os, glob
+
+shell.prefix("set -eo pipefail ; ")
+
+configfile:'config.yaml'
+
+if not os.path.exists("logs"):
+	os.makedirs("logs")
+
+
+## parameters
+
+OriginalVCF = config["OriginalVCF"]
+callable_genome = config["path_callable_genome"]
+exeMakeMSMCinput = config["exeMakeMSMCinput"]
+exeMSMC = config["exeMSMC"]
+exeDecode = config["exeDecode"]
+inputDir = "pseudoDiploid/"
+
+dict_POP_sampleID = {}
+for POP in config["HumanPopID"].keys():
+	with open( config["HumanPopID"][POP] ) as fin:
+		if POP not in dict_POP_sampleID:
+			dict_POP_sampleID[POP] = []
+		for line in fin:
+			dict_POP_sampleID[POP].append(line.strip())
+					
+
+dict_chrom_locus = {}
+with open(config["targetBED"]) as fin:
+	for line in fin:
+		l_line = line.strip().split()[:3]
+		if l_line[0] not in dict_chrom_locus:
+			dict_chrom_locus[l_line[0]] = []
+		dict_chrom_locus[l_line[0]].append("_".join(l_line))
+
+list_chrom = dict_chrom_locus.keys()
+
+def mem_attempt(wildcards, attempt):
+	return attempt * 4
+
+
+wildcard_constraints:
+	POP="[a-zA-Z]+",
+	sampleID="[a-zA-Z]+_[a-zA-Z]+_[a-zA-Z0-9]+_[A-Z0-9]+",
+	CHROM="chr[X0-9]+",
+	LOCUS="chr[X0-9]+_[0-9]+_[0-9]+"
+
+
+def _all_decode(wildcards):
+	rtn = []
+	pat2 = "DecodeOutput/{POP}/{sampleID}/{sampleID}.{CHROM}.posterior.txt"
+	for POP in dict_POP_sampleID:
+		for sampleID in dict_POP_sampleID[POP]:
+			for chrom in list_chrom:
+				rtn.append(pat2.format(POP=POP, sampleID=sampleID, CHROM=chrom))
+	return (rtn)
+
+
+
+rule all:
+	input:
+		_all_decode,
+
+rule subset_byPop:
+	input: 
+			vcf = OriginalVCF,
+	output: 
+			"vcfByPop/{POP}.vcf.gz"
+	threads: 2
+	params:
+			POP = lambda wc: config["HumanPopID"][wc.POP]
+	resources:
+		mem=mem_attempt,
+		hrs=24,
+	shell:
+		"""
+			which bcftools; bcftools view -S  {params.POP}  --threads {threads}  {input.vcf} -Ov  |  bcftools view -g ^miss -c1 -m2 -M2 -v snps |  bcftools annotate -x INFO,ˆFORMAT/GT -Oz > {output} && tabix -p vcf {output}
+		"""
+
+
+rule subsetVCF_bySamples:
+	input: 
+			vcf="vcfByPop/{POP}.vcf.gz",
+	output:
+			"byPops_byCHROM/{POP}/{sampleID}/{sampleID}.{CHROM}.vcf.gz"
+	threads: 2
+	resources:
+		mem=mem_attempt,
+		hrs=24,
+	shell:
+		"""
+			which bcftools; bcftools view -r {wildcards.CHROM} -s {wildcards.sampleID}  --threads {threads}  {input.vcf} -Ov  |  bgzip -c > {output} && tabix -p vcf {output}
+	
+		"""
+
+rule makeMSMCinput:
+	input:
+			vcf = "byPops_byCHROM/{POP}/{sampleID}/{sampleID}.{CHROM}.vcf.gz",
+			mask_callable_genome = callable_genome,
+	output: 
+			MSMCinput = "MSMCinput/{POP}/{sampleID}/{sampleID}.{CHROM}.multistep.txt"
+	threads: 1
+	resources:
+		mem=4,
+		hrs=24,
+	shell:
+		"""
+			{exeMakeMSMCinput} --mask {input.mask_callable_genome}  {input.vcf} | awk 'OFS="\\t" {{if($3>0) print $1,$2,$3,toupper($4)}}' >  {output.MSMCinput}
+		"""
+
+
+rule runMSMC:
+	input: 
+			MSMCinput = expand("MSMCinput/{{POP}}/{{sampleID}}/{{sampleID}}.{CHROM}.multistep.txt", CHROM = list_chrom)
+	output:
+			MSMCoutput = "MSMCoutput/{POP}/{sampleID}/{sampleID}.msmc2.final.txt",
+			MSMClog = "MSMCoutput/{POP}/{sampleID}/{sampleID}.msmc2.log",
+	threads: 6
+	resources:
+		mem=40,
+		hrs=24,
+	shell:
+		"""
+			y={output.MSMCoutput}; x=${{y%.final.txt}}; outPrefix=${{x##}};  {exeMSMC}  -p 1*2+33*1+3*2+2*3  -t {threads}  -o ${{outPrefix}}  -I 0,1  {input.MSMCinput}
+
+		"""
+
+rule decode:
+	input: 
+			MSMCinput = "MSMCinput/{POP}/{sampleID}/{sampleID}.{CHROM}.multistep.txt",
+			MSMCoutput = "MSMCoutput/{POP}/{sampleID}/{sampleID}.msmc2.final.txt",
+			MSMClog = "MSMCoutput/{POP}/{sampleID}/{sampleID}.msmc2.log",
+
+	output:
+			decode = "DecodeOutput/{POP}/{sampleID}/{sampleID}.{CHROM}.posterior.txt",
+	threads: 2
+	resources:
+		mem=10,
+		hrs=24,
+	shell:
+		"""
+			mu=`grep mutation {input.MSMClog} | awk '{{print $2}}'`; r=`grep recomb {input.MSMClog} | awk '{{print $2}}'`; {exeDecode} -m ${{mu}} -r ${{r}} --nrThreads {threads}  {input.MSMCinput} > {output.decode}
+
+		"""
+
+rule extractDecode:
+	input:
+			decode = "DecodeOutput/{POP}/{sampleID}/{sampleID}.{CHROM}.posterior.txt",
+	output:
+			BEDdecode = "DecodeOutputBED/{POP}/{sampleID}/{CHROM}/{sampleID}.{LOCUS}.posterior.txt",
+	threads: 1
+	resources:
+		mem=10,
+		hrs=24,
+	run:
+		chrom, start, end = wildcards.LOCUS.split("_")
+		shell(""" awk 'OFS="\\t" {{if($1 ~ /^#/) print $0; else if (($1 >= %s) && ($1 <= %s)) print $0}}' {input.decode} > {output.BEDdecode} """ % (start, end))
+
+

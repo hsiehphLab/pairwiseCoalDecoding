@@ -1,0 +1,36 @@
+cluster:
+  mkdir -p logs/{rule} &&
+  sbatch
+    --partition={resources.partition}
+    --account={resources.account}
+    --cpus-per-task={threads}
+    --mem={resources.mem}g
+    --tmp={resources.disk}g
+    --time={resources.hrs}:00:00
+    --job-name=smk-{rule}-{wildcards}
+    --output=logs/{rule}/{rule}-{wildcards}-%j.out
+    --export=all
+    --parsable
+
+default-resources:
+  - account=hsiehph
+  - partition=sioux,agsmall,aglarge
+  - hrs=6
+  - mem=4
+  - disk=4
+
+restart-times: 3
+max-jobs-per-second: 200
+max-status-checks-per-second: 1
+local-cores: 1
+latency-wait: 60
+jobs: 500
+scheduler: greedy
+cluster-cancel: scancel
+cluster-cancel-nargs: 1000
+keep-going: True
+rerun-incomplete: True
+printshellcmds: True
+use-conda: True
+reason: True
+cluster-status: status-sacct.sh

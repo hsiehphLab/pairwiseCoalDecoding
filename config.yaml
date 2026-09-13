@@ -1,0 +1,16 @@
+---
+
+OriginalVCF: inputFiles/AFR_GWD_HG02818_F.vcf.gz
+
+path_gmap: inputFiles/plink_geneticMaps_hg38/
+path_callable_sample: inputFiles/chr16.callable.bed
+path_callable_genome: inputFiles/maskFiles/hg38.chrom.sizes.bed
+
+exeMakeMSMCinput: scripts/generate_multihetsep.py
+exeMSMC: scripts/msmc2
+exeDecode: scripts/decode
+
+HumanPopID:
+    AFR: inputFiles/AFR.new.ids
+
+targetBED: inputFiles/targets.bed
